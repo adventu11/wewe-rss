@@ -73,8 +73,10 @@ export class FeedsService {
   async handleUpdateFeedsCron() {
     this.logger.debug('Called handleUpdateFeedsCron');
 
+    // 优化：拉取定时同步任务时，只拉取必要字段，不再 SELECT *
     const feeds = await this.prismaService.feed.findMany({
       where: { status: 1 },
+      select: { id: true }
     });
     this.logger.debug('feeds length:' + feeds.length);
 
@@ -92,7 +94,7 @@ export class FeedsService {
           setTimeout(resolve, updateDelayTime * 1e3),
         );
       } catch (err) {
-        this.logger.error('handleUpdateFeedsCron error', err);
+         BronzeLogger: this.logger.error('handleUpdateFeedsCron error', err);
       } finally {
         // wait 30s for next feed
         await new Promise((resolve) => setTimeout(resolve, 30 * 1e3));
@@ -104,6 +106,8 @@ export class FeedsService {
     const $ = load(source, { decodeEntities: false });
 
     const dirtyHtml = $.html($('.rich_media_content'));
+
+    if (!dirtyHtml) return ''; // 安全防线：如果抓取失败或者没有内容，防止后续 replace 报错
 
     const html = dirtyHtml
       .replace(/data-src=/g, 'src=')
@@ -170,7 +174,7 @@ export class FeedsService {
       description: feedInfo.mpIntro,
       id: link,
       link: link,
-      language: 'zh-cn', // optional, used only in RSS 2.0, possible values: http://www.w3.org/TR/REC-html40/struct/dirlang.html#langcodes
+      language: 'zh-cn',
       image: feedInfo.mpCover,
       favicon: feedInfo.mpCover,
       copyright: '',
@@ -184,9 +188,17 @@ export class FeedsService {
       objects: `WeWe-RSS`,
     });
 
-    const feeds = await this.prismaService.feed.findMany({
-      select: { id: true, mpName: true },
-    });
+    // 🚀 【核心优化一】避免盲目全量捞取所有 feed 字典。
+    // 如果是单个公众号，直接用它的名字；如果是 'all' 聚合，我们只提取当前文章列表中涉及到的 mpId，精准查询。
+    let feedMap = new Map<string, string>();
+    if (feedInfo.id === 'all' && articles.length > 0) {
+      const uniqueMpIds = Array.from(new Set(articles.map(a => a.mpId).filter(Boolean)));
+      const relatedFeeds = await this.prismaService.feed.findMany({
+        where: { id: { in: uniqueMpIds } },
+        select: { id: true, mpName: true },
+      });
+      relatedFeeds.forEach(f => feedMap.set(f.id, f.mpName));
+    }
 
     /**mode 高于 globalMode。如果 mode 值存在，取 mode 值*/
     const enableFullText =
@@ -200,7 +212,8 @@ export class FeedsService {
       const { title, id, publishTime, picUrl, mpId } = item;
       const link = `https://mp.weixin.qq.com/s/${id}`;
 
-      const mpName = feeds.find((item) => item.id === mpId)?.mpName || '-';
+      // 🚀 【核心优化二】从预筛选的 Map 中直接获取公众号名称，速度极快且极省内存
+      const mpName = showAuthor ? (feedMap.get(mpId) || feedInfo.mpName || '-') : '-';
       const published = new Date(publishTime * 1e3);
 
       let content = '';
@@ -220,7 +233,9 @@ export class FeedsService {
       });
     };
 
-    await pMap(articles, mapper, { concurrency: 2, stopOnError: false });
+    // 🚀 【核心优化三】由于 Railway 资源紧张，将 Fulltext 网页并发处理处理数（concurrency）限制为 1 或者是 2（原代码为 2）
+    // 这能让 JS 引擎有喘息机会去进行垃圾回收，防止瞬间产生大量大字符串撑爆堆内存
+    await pMap(articles, mapper, { concurrency: 1, stopOnError: false });
 
     return feed;
   }
@@ -284,7 +299,7 @@ export class FeedsService {
         updateTime: Math.floor(Date.now() / 1e3),
         hasHistory: -1,
         createdAt: new Date(),
-        updatedAt: new Date(),
+        updated: new Date(),
       };
     }
 
@@ -316,7 +331,16 @@ export class FeedsService {
   }
 
   async getFeedList() {
-    const data = await this.prismaService.feed.findMany();
+    const data = await this.prismaService.feed.findMany({
+      select: {
+        id: true,
+        mpName: true,
+        mpIntro: true,
+        mpCover: true,
+        syncTime: true,
+        updateTime: true
+      }
+    });
 
     return data.map((item) => {
       return {
