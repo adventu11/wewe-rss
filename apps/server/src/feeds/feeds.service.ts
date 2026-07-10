@@ -66,14 +66,13 @@ export class FeedsService {
     });
   }
 
-  @Cron(process.env.CRON_EXPRESSION || '35 5,17 * * *', {
+@Cron(process.env.CRON_EXPRESSION || '35 5,17 * * *', {
     name: 'updateFeeds',
     timeZone: 'Asia/Shanghai',
   })
   async handleUpdateFeedsCron() {
     this.logger.debug('Called handleUpdateFeedsCron');
 
-    // 优化：拉取定时同步任务时，只拉取必要字段，不再 SELECT *
     const feeds = await this.prismaService.feed.findMany({
       where: { status: 1 },
       select: { id: true }
@@ -94,10 +93,22 @@ export class FeedsService {
           setTimeout(resolve, updateDelayTime * 1e3),
         );
       } catch (err) {
-         BronzeLogger: this.logger.error('handleUpdateFeedsCron error', err);
+        this.logger.error('handleUpdateFeedsCron error', err);
       } finally {
-        // wait 30s for next feed
-        await new Promise((resolve) => setTimeout(resolve, 30 * 1e3));
+        // 🚀 【优化一】增加单个公众号更新完毕后的喘息时间，从 30 秒延长到 60 秒
+        // 这能极大程度缓解 Railway 容器由于并发带来的短时内存压力
+        await new Promise((resolve) => setTimeout(resolve, 60 * 1e3));
+
+        // 🚀 【优化二】强制触发 Node.js 垃圾回收
+        // 检查全局 gc 函数是否存在（需要在启动参数开启 --expose-gc，稍后我们在 Railway 变量里配置）
+        if (global && typeof global.gc === 'function') {
+          try {
+            this.logger.log('强制触发垃圾回收 (Garbage Collection)...');
+            global.gc();
+          } catch (e) {
+            this.logger.error('GC failed', e);
+          }
+        }
       }
     }
   }
