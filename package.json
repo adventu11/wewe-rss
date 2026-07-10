@@ -14,7 +14,7 @@
     "dev": "pnpm run --parallel dev",
     "build:server": "pnpm --filter server build",
     "build:web": "pnpm --filter web build",
-    "start:server": "pnpm --filter server --node-options=\"--expose-gc\" start:prod",
+    "start:server": "pnpm --filter server start:prod",
     "start:web": "pnpm --filter web start",
     "fmt": "prettier --write .",
     "fmt.check": "prettier --check ."
