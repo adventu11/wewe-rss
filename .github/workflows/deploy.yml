@@ -3,10 +3,11 @@ name: Build and Push Docker Image
 on:
   push:
     branches: [main]
+  workflow_dispatch: # ✅ 新增：支持在 Actions 页面手动点击 "Run workflow" 触发
 
 permissions:
   contents: read
-  packages: write   # ✅ 关键：允许写 GHCR
+  packages: write # ✅ 关键：允许写 GHCR
 
 jobs:
   build-and-push:
