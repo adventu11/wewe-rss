@@ -19,7 +19,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     permissions:
-      packages: write   # 授予对 GitHub Packages 的写入权限
+      packages: write   # 授予 GitHub Packages 的写入权限
       contents: read
     steps:
       - uses: actions/checkout@v4
